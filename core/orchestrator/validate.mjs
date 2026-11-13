@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.mjs';
+import { REPORT_FILE } from './paths-policy.mjs';
 
 // Các kiểm tra thuộc cổng của Coder. e2e/install không nằm ở đây.
 export const GATE_CHECKS = ['build', 'typecheck', 'lint', 'unit_test'];
@@ -74,8 +75,11 @@ export async function runGate({ config, taskId, execId, worktree, root = process
   mkdirSync(logDir, { recursive: true });
 
   const results = [];
-  const dirty = git(cwd, ['status', '--porcelain']);
-  results.push({ name: 'git_clean', required: true, passed: dirty === '', detail: dirty === '' ? 'không có thay đổi chưa commit' : dirty.split('\n').slice(0, 20) });
+  const dirty = git(cwd, ['status', '--porcelain'])
+    .split('\n')
+    .filter((line) => line && line.slice(3).trim() !== REPORT_FILE);
+  const hasUncommittedChanges = dirty.length > 0;
+  results.push({ name: 'git_clean', required: true, passed: !hasUncommittedChanges, detail: !hasUncommittedChanges ? 'không có thay đổi chưa commit' : dirty.slice(0, 20) });
 
   if (base) {
     const ahead = Number(git(cwd, ['rev-list', '--count', `${base}..HEAD`]));

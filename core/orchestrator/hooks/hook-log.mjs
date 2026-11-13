@@ -65,3 +65,14 @@ export function logDenied(root, execId, { hook, tool, target, reason, cwd, taskI
     });
   } catch { /* bỏ qua */ }
 }
+
+/** Ghi một sự kiện hook; lỗi ghi log không được làm thay đổi kết quả hook. */
+export function logHook(root, execId, event) {
+  try {
+    appendOnce(logFileFor(root, execId), {
+      ts: new Date().toISOString(),
+      exec_id: execId,
+      ...event,
+    });
+  } catch { /* bỏ qua */ }
+}

@@ -16,12 +16,14 @@ export const MAIN_PROTECTED = ['state', 'logs'];
 
 const isInside = (rel) => rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 
-function taskFromPath(p, base) {
+export function taskFromPath(p, base) {
   const rel = relative(base, p);
   if (!isInside(rel)) return null;
   const [taskId, ...rest] = rel.split(sep);
   return { taskId, rel: rest.join('/') };
 }
+
+export const worktreeBase = (mainRoot, config) => realResolve(resolve(mainRoot, config.git.worktree_dir));
 
 /** Tìm Task đang in_progress trong state/ (ưu tiên execId nếu có, rồi file mới nhất). */
 export function findActiveTask(root, taskId, execId) {
@@ -45,7 +47,7 @@ export function findActiveTask(root, taskId, execId) {
  * actor = Task của người đang sửa: lấy từ AGENT_TASK_ID (chạy riêng từng Task) hoặc từ cwd nằm trong worktree.
  */
 export function evaluateEdit({ filePath, cwd, mainRoot, config, env = process.env, findTask = findActiveTask }) {
-  const wtBase = realResolve(resolve(mainRoot, config.git.worktree_dir));
+  const wtBase = worktreeBase(mainRoot, config);
   const target = realResolve(resolve(cwd, filePath));
   const actor = env.AGENT_TASK_ID || taskFromPath(realResolve(cwd), wtBase)?.taskId || null;
 
@@ -76,6 +78,7 @@ export function evaluateEdit({ filePath, cwd, mainRoot, config, env = process.en
   if (!found) {
     return deny(`Không thấy ${actor} ở trạng thái in_progress trong state/ (Task chưa được giao, đã xong, hoặc không đọc được state).`, { actor });
   }
+  if (rel === '.task-report.json') return { allow: true, actor, execId: found.execId };
   const owned = found.task.owned_files ?? [];
   if (!owned.length) return deny(`${actor} chưa khai báo owned_files nên không có quyền sửa file nào. ${GUIDE}`, { actor, execId: found.execId });
 
