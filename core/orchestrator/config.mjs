@@ -24,8 +24,9 @@ export const DEFAULTS = {
   },
   ownership: { shared_files: [] },
   security: { deny_read: [], require_human_approval: ['push', 'merge_to_base', 'delete_branch'] },
-  handoff: { agent_types: ['coder'] },
   models: {},
+  // agent_type của các Agent phải nộp báo cáo bàn giao khi kết thúc (SubagentStop)
+  handoff: { agent_types: ['coder', 'coding-agent'] },
 };
 
 export class ConfigError extends Error {

@@ -5,7 +5,9 @@
 //   node cli.mjs next   --exec E1
 //   node cli.mjs move   <TASK> <status> --exec E1 [--agent coder-a] [--note "..."]
 //   node cli.mjs status --exec E1
-// Exit code: 0 ok, 1 kế hoạch có xung đột (check), 2 lỗi sử dụng/cấu hình/state.
+//   node cli.mjs brief  <TASK> --exec E1                   (sinh Task Brief JSON để giao cho Coder)
+//   node cli.mjs report-check <TASK> --exec E1             (kiểm tra độc lập báo cáo bàn giao; exit 1 nếu không đạt)
+// Exit code: 0 ok, 1 kế hoạch có xung đột / báo cáo không đạt, 2 lỗi sử dụng/cấu hình/state.
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -15,9 +17,8 @@ import {
   readyTasks, detectDeadlock, statePath,
 } from './state.mjs';
 import { planCheck } from './ownership.mjs';
-import {
-  buildBrief, checkHandoff, REPORT_FILE, validateBriefShape, worktreePathFor,
-} from './report.mjs';
+import { buildBrief, checkHandoff, validateBriefShape, worktreePathFor, REPORT_FILE } from './report.mjs';
+import { join } from 'node:path';
 
 const [command, ...rest] = process.argv.slice(2);
 const { values, positionals } = parseArgs({
@@ -39,9 +40,7 @@ const readTasks = () => {
 };
 
 try {
-  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check'].includes(command)) {
-    throw new Error('Lệnh: check | init | next | move | status | brief | report-check');
-  }
+  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check'].includes(command)) throw new Error('Lệnh: check | init | next | move | status | brief | report-check');
   if (command !== 'check' && !values.exec) throw new Error('Thiếu --exec <exec_id>');
   const config = loadConfig(root);
 
@@ -59,30 +58,6 @@ try {
     const state = createState({ execId: values.exec, tasks, maxAttempts: config.limits.max_attempts });
     saveState(root, state);
     out({ ok: true, exec_id: state.exec_id, tasks: state.tasks.length, warnings: plan.warnings, conflicts: plan.errors });
-  } else if (command === 'brief' || command === 'report-check') {
-    const [taskId] = positionals;
-    if (!taskId) throw new Error(`Dùng: ${command} <TASK> --exec <exec_id>`);
-    const state = loadState(root, values.exec);
-    const task = getTask(state, taskId);
-    if (command === 'brief') {
-      const brief = buildBrief({ task, config, root, execId: values.exec });
-      const errors = validateBriefShape(brief);
-      if (errors.length) throw new Error(`Task Brief sai schema:\n  - ${errors.join('\n  - ')}`);
-      out(brief);
-    } else {
-      const worktree = worktreePathFor(root, config, taskId);
-      const reportPath = resolve(worktree, REPORT_FILE);
-      let report;
-      try {
-        report = JSON.parse(readFileSync(reportPath, 'utf8'));
-      } catch {
-        out({ ok: false, problems: [`Không có báo cáo hợp lệ tại ${reportPath}.`] });
-        process.exit(1);
-      }
-      const result = checkHandoff({ report, task, execId: values.exec, config, mainRoot: root, worktree });
-      out({ ok: result.problems.length === 0, ...result });
-      process.exit(result.problems.length ? 1 : 0);
-    }
   } else if (command === 'next') {
     const state = loadState(root, values.exec);
     out({ ready: readyTasks(state, config.limits.max_parallel).map((t) => t.id), ...detectDeadlock(state) });
@@ -91,6 +66,25 @@ try {
     if (!taskId || !to) throw new Error('Dùng: move <TASK> <status> --exec <id>');
     updateState(root, values.exec, (s) => transition(s, taskId, to, { agent: values.agent, note: values.note }));
     out({ ok: true, task_id: taskId, status: to });
+  } else if (command === 'brief') {
+    const [taskId] = positionals;
+    if (!taskId) throw new Error('Dùng: brief <TASK> --exec <id>');
+    const brief = buildBrief({ task: getTask(loadState(root, values.exec), taskId), config, root, execId: values.exec });
+    const errors = validateBriefShape(brief);
+    if (errors.length) throw new Error(`Task Brief không hợp lệ (Task thiếu owned_files/acceptance_criteria?):\n  - ${errors.join('\n  - ')}`);
+    out(brief);
+  } else if (command === 'report-check') {
+    const [taskId] = positionals;
+    if (!taskId) throw new Error('Dùng: report-check <TASK> --exec <id>');
+    const task = getTask(loadState(root, values.exec), taskId);
+    const worktree = worktreePathFor(root, config, taskId);
+    const file = join(worktree, REPORT_FILE);
+    if (!existsSync(file)) { out({ ok: false, problems: [`Không có ${file}`] }); process.exit(1); }
+    let report;
+    try { report = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { out({ ok: false, problems: [`${REPORT_FILE} không phải JSON hợp lệ: ${e.message}`] }); process.exit(1); }
+    const { problems, notes } = checkHandoff({ report, task, execId: values.exec, config, mainRoot: root, worktree });
+    out({ ok: problems.length === 0, problems, notes });
+    process.exit(problems.length ? 1 : 0);
   } else {
     const state = loadState(root, values.exec);
     out({ exec_id: state.exec_id, tasks: state.tasks.map((t) => ({ id: t.id, status: t.status, attempts: t.attempts, assigned_to: t.assigned_to })), ...detectDeadlock(state) });
