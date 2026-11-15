@@ -4,9 +4,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validate } from './schema-lite.mjs';
-import { REPORT_FILE, FRAMEWORK_PATHS, ownershipViolation } from './paths-policy.mjs';
+import { REPORT_FILE, REVIEW_FILE, FRAMEWORK_PATHS, ownershipViolation } from './paths-policy.mjs';
 
-export { REPORT_FILE };
+export { REPORT_FILE, REVIEW_FILE };
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPORT_SCHEMA_PATH = join(here, '..', 'schemas', 'report.schema.json');
 export const BRIEF_SCHEMA_PATH = join(here, '..', 'schemas', 'task-brief.schema.json');
@@ -49,7 +49,7 @@ export function buildBrief({ task, config, root, execId }) {
 }
 
 function gitIn(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).replace(/\r/g, '').trim();
 }
 function refExists(cwd, ref) {
   try { gitIn(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${ref}`]); return true; } catch { return false; }
@@ -71,7 +71,10 @@ export function checkHandoff({ report, task, execId, config, mainRoot, worktree 
   const head = gitIn(worktree, ['rev-parse', 'HEAD']);
   const short = head.slice(0, 7);
 
-  const dirty = gitIn(worktree, ['status', '--porcelain']).split('\n').filter((l) => l && !l.endsWith(REPORT_FILE));
+  const dirty = gitIn(worktree, ['status', '--porcelain'])
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.endsWith(REPORT_FILE) && !l.endsWith(REVIEW_FILE));
   if (dirty.length) problems.push(`Còn thay đổi chưa commit: ${dirty.slice(0, 5).join('; ')}. Hãy commit hết (hoặc bỏ thay đổi không cần).`);
 
   if (report.result === 'READY_FOR_REVIEW') {
@@ -99,7 +102,10 @@ export function checkHandoff({ report, task, execId, config, mainRoot, worktree 
   if (!base) {
     notes.push('Không tìm thấy nhánh base nên bỏ qua đối chiếu git diff.');
   } else {
-    const changed = gitIn(worktree, ['diff', '--name-only', `${base}...HEAD`]).split('\n').filter(Boolean);
+    const changed = gitIn(worktree, ['diff', '--name-only', `${base}...HEAD`])
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
     const outside = changed.map((f) => [f, ownershipViolation(f, task.owned_files ?? [], config, task.id)]).filter(([, why]) => why);
     if (outside.length) problems.push(`Commit có file ngoài phạm vi: ${outside.slice(0, 5).map(([f]) => f).join(', ')}${outside.length > 5 ? ', ...' : ''}. Hãy revert các file này (phạm vi cho phép: ${(task.owned_files ?? []).join(', ') || 'không có'}).`);
     const unlisted = changed.filter((f) => !report.files_changed.includes(f));

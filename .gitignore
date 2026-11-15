@@ -1,7 +1,7 @@
 node_modules/
 state/
 logs/
-.claude/
+/.claude/
 *.tmp
 *.log
 .DS_Store

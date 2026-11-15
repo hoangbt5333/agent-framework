@@ -2,6 +2,7 @@
 import { hasGlob, matchesAny, normalize } from './ownership.mjs';
 
 export const REPORT_FILE = '.task-report.json'; // nằm ở gốc worktree, phải được .gitignore
+export const REVIEW_FILE = '.task-review.json';
 // Phần của khung / bằng chứng: Coder không bao giờ được sửa
 export const FRAMEWORK_PATHS = ['.git', '.claude', 'orchestrator', 'state', 'logs', 'project.config.json'];
 export const OWNERSHIP_GUIDE = 'Nếu thật sự cần sửa file này, hãy báo Orchestrator để Architect cập nhật owned_files hoặc tách Task; đừng tự vượt phạm vi.';
