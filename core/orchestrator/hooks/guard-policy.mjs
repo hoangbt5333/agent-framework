@@ -12,6 +12,8 @@ export const PROTECTED = ['.git', '.claude', 'orchestrator', 'state', 'logs', 'p
 
 const WRAPPERS = new Set(['env', 'command', 'nice', 'nohup', 'time', 'exec', 'xargs', 'timeout', 'stdbuf', 'builtin', 'setsid']);
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
+const WIN_SHELLS = new Set(['cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe']);
+const DELETE_CMDS = new Set(['rm', 'unlink', 'del', 'del.exe', 'erase', 'erase.exe', 'rmdir', 'rmdir.exe', 'rd', 'rd.exe', 'remove-item', 'ri']);
 const PRIVILEGE = new Set(['sudo', 'su', 'doas']);
 // Tách lệnh theo ; && || | xuống dòng và & (không tách 2>&1, &>)
 const SEGMENT_SPLIT = /&&|\|\||;|\||\n|(?<![>&])&(?![>&])/;
@@ -30,7 +32,18 @@ export function tokenize(s) {
       continue;
     }
     if (c === "'" || c === '"') { quote = c; started = true; continue; }
-    if (c === '\\' && i + 1 < s.length) { cur += s[++i]; started = true; continue; }
+    if (c === '\\' && i + 1 < s.length) {
+      const next = s[i + 1];
+      if (cur !== '' && /[A-Za-z0-9_.\-]/.test(next)) {
+        // Dấu phân cách thư mục trên Windows (ví dụ state\E1.json)
+        cur += '/' + s[++i];
+        started = true;
+        continue;
+      }
+      cur += s[++i];
+      started = true;
+      continue;
+    }
     if (/\s/.test(c)) {
       if (cur !== '' || started) { tokens.push(cur); cur = ''; started = false; }
       continue;
@@ -64,23 +77,26 @@ function checkGit(args) {
   return ALLOW;
 }
 
-function checkRm(args, cwd) {
+function checkDelete(prog, args, cwd) {
   const targets = [];
   let optionsDone = false;
   for (const a of args) {
     if (!optionsDone && a === '--') { optionsDone = true; continue; }
-    if (!optionsDone && a.startsWith('-')) continue;
+    // Bỏ qua option dạng -flag hoặc /flag của Windows cmd (/f, /s, /q)
+    if (!optionsDone && (a.startsWith('-') || (/^[\\/][a-zA-Z]/i.test(a) && a.length <= 4))) continue;
     targets.push(a);
   }
   for (const t of targets) {
-    if (/[$`]/.test(t) || t.startsWith('~')) return deny(`rm với đường dẫn "${t}" không kiểm chứng được (biến/~). Dùng đường dẫn tường minh trong thư mục làm việc.`);
-    if (/(^|\/)\.\*/.test(t)) return deny(`rm với mẫu "${t}" có thể khớp ".." — bị cấm.`);
+    if (/[$`]/.test(t) || t.startsWith('~') || /%[A-Za-z0-9_]+%/.test(t)) {
+      return deny(`${prog} với đường dẫn "${t}" không kiểm chứng được (biến/~). Dùng đường dẫn tường minh trong thư mục làm việc.`);
+    }
+    if (/(^|[\\/])\.\*/.test(t)) return deny(`${prog} với mẫu "${t}" có thể khớp ".." — bị cấm.`);
     const abs = resolve(cwd, t);
     const rel = relative(cwd, abs);
-    if (rel === '') return deny('rm chính thư mục làm việc bị cấm.');
-    if (rel.startsWith('..') || isAbsolute(rel)) return deny(`rm "${t}" nằm ngoài thư mục làm việc (${cwd}).`);
+    if (rel === '') return deny(`${prog} chính thư mục làm việc bị cấm.`);
+    if (rel.startsWith('..') || isAbsolute(rel)) return deny(`${prog} "${t}" nằm ngoài thư mục làm việc (${cwd}).`);
     const top = rel.split(/[\\/]/)[0];
-    if (PROTECTED.includes(top)) return deny(`rm "${t}" động tới "${top}" (thuộc khung/bằng chứng) — bị cấm.`);
+    if (PROTECTED.includes(top)) return deny(`${prog} "${t}" động tới "${top}" (thuộc khung/bằng chứng) — bị cấm.`);
   }
   return ALLOW;
 }
@@ -97,17 +113,33 @@ function evaluateTokens(tokens, ctx, depth) {
   }
   if (!t.length) return ALLOW;
   const prog = basename(t[0]);
+  const progLower = prog.toLowerCase();
   const args = t.slice(1);
 
-  if (PRIVILEGE.has(prog)) return deny(`${prog} bị cấm (quyền tối thiểu).`);
-  if (SHELLS.has(prog)) {
+  if (PRIVILEGE.has(progLower)) return deny(`${prog} bị cấm (quyền tối thiểu).`);
+  if (SHELLS.has(progLower)) {
     const i = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
-    if (i !== -1 && args[i + 1] !== undefined) return evaluateString(args[i + 1], ctx, depth + 1);
+    if (i !== -1 && args[i + 1] !== undefined) return evaluateString(args.slice(i + 1).join(' '), ctx, depth + 1);
     return ALLOW;
   }
-  if (prog === 'eval') return evaluateString(args.join(' '), ctx, depth + 1);
-  if (prog === 'git') return checkGit(args);
-  if (prog === 'rm') return checkRm(args, ctx.cwd);
+  if (WIN_SHELLS.has(progLower)) {
+    if (progLower.startsWith('cmd')) {
+      const i = args.findIndex((a) => /^[\\/][cCkK]$/.test(a));
+      if (i !== -1 && args[i + 1] !== undefined) {
+        return evaluateString(args.slice(i + 1).join(' '), ctx, depth + 1);
+      }
+      return ALLOW;
+    }
+    // powershell / pwsh
+    const i = args.findIndex((a) => /^[-/](?:command|c)$/i.test(a));
+    if (i !== -1 && args[i + 1] !== undefined) {
+      return evaluateString(args.slice(i + 1).join(' '), ctx, depth + 1);
+    }
+    return ALLOW;
+  }
+  if (progLower === 'eval') return evaluateString(args.join(' '), ctx, depth + 1);
+  if (progLower === 'git' || progLower === 'git.exe') return checkGit(args);
+  if (DELETE_CMDS.has(progLower)) return checkDelete(prog, args, ctx.cwd);
   return ALLOW;
 }
 

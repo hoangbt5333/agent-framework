@@ -50,6 +50,24 @@ test('chặn rm ngoài phạm vi hoặc không kiểm chứng được', () => {
   ]) assert.equal(ev(c).allow, false, c);
 });
 
+test('chặn Windows native commands và shell bypass nguy hiểm', () => {
+  for (const c of [
+    'cmd /c git push', 'cmd.exe /C git push origin main', 'cmd /c "git push -f"',
+    'powershell -Command git push', 'powershell.exe -command "git push"',
+    'pwsh -c git push', 'pwsh.exe -Command "git reset --hard"',
+    'cmd /c del /f /q state\\E1.json', 'del .git', 'del.exe /f logs\\hooks.jsonl',
+    'erase /q project.config.json', 'rmdir /s /q .git', 'rd /s /q orchestrator',
+    'del /f /q %USERPROFILE%\\test', 'del /f ..\\outside.txt',
+    'git.exe push', 'git.exe reset --hard',
+  ]) assert.equal(ev(c).allow, false, c);
+
+  // Cho phép lệnh Windows thông thường
+  for (const c of [
+    'del dist\\bundle.js', 'cmd /c dir', 'powershell -Command "Get-ChildItem src"',
+    'rmdir dist\\temp', 'erase build\\cache.tmp',
+  ]) assert.equal(ev(c).allow, true, c);
+});
+
 const HOOK = new URL('../core/orchestrator/hooks/guard-bash.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const LOG = new URL('../core/orchestrator/hooks/log-event.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const run = (script, input, env = {}) => spawnSync(process.execPath, [script], { input, encoding: 'utf8', env: { ...process.env, ...env } });

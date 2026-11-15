@@ -10,11 +10,15 @@ Không cần thư viện ngoài (Node >= 20). `npm test` chạy 69 test.
 - `core/schemas/`, `profiles/`, `tests/`
 
 ## Cài vào dự án
-1. Copy `core/orchestrator/` -> `orchestrator/`, `core/schemas/` -> `schemas/` ở gốc dự án (ngang hàng nhau) hoặc dùng `install.mjs`.
-2. Copy `profiles/angular.json` -> `project.config.json`, sửa lệnh cho khớp dự án.
-3. GỘP `core/.claude/settings.fragment.json` vào `.claude/settings.json` (đừng ghi đè). Đối chiếu cú pháp hook/permissions với tài liệu Claude Code bạn dùng.
-4. `.gitignore`: thêm `state/` và `logs/`.
-5. Commit `orchestrator/`, `.claude/`, `project.config.json` TRƯỚC khi tạo worktree.
+1. Dùng lệnh cài đặt tự động: `node install.mjs <target_dir> [--profile angular|node-ts] [--dry-run]`
+   - `--dry-run`: mô phỏng cài đặt, kiểm tra các thao tác mà không ghi đè bất kỳ file nào.
+   - Tự động sao chép `orchestrator/`, `schemas/`, khởi tạo `project.config.json`, cập nhật `CLAUDE.md`, gộp an toàn `.claude/settings.json`, và sinh `agent-framework.lock.json`.
+2. Hoặc cài thủ công:
+   - Copy `core/orchestrator/` -> `orchestrator/`, `core/schemas/` -> `schemas/` ở gốc dự án.
+   - Copy `profiles/angular.json` -> `project.config.json`, sửa lệnh cho khớp dự án.
+   - GỘP `core/.claude/settings.fragment.json` vào `.claude/settings.json` (đừng ghi đè).
+   - `.gitignore`: thêm `state/` và `logs/`.
+   - Commit `orchestrator/`, `.claude/`, `project.config.json` TRƯỚC khi tạo worktree.
 
 ## Quy ước bắt buộc
 - Worktree của Task nằm ở `<git.worktree_dir>/<TASK-ID>/` (mặc định `../wt/TASK-001`), tên thư mục = id Task.
@@ -67,10 +71,18 @@ Mỗi lần chặn được ghi vào `logs/<exec>/hooks.jsonl` (event `guard_den
   - Trạng thái tích hợp Jira MCP (đồng bộ hoặc bỏ qua fail-open).
   - Minh bạch về Token Usage: ghi chú rõ `Nguồn dữ liệu không khả dụng từ CLI` do hạn chế trích xuất trực tiếp từ Claude Code CLI transcript.
 
+## Bảo vệ Windows Native & Schema Reviewer (H4)
+- **Làm cứng bảo mật trên Windows**:
+  - Tự động bóc tách và phân tích các wrapper shell: `cmd.exe /c`, `powershell.exe -Command`, `pwsh -c`.
+  - Chặn các lệnh xóa native nguy hiểm của Windows: `del`, `erase`, `rmdir`, `rd`, `Remove-Item` khi tác động ra ngoài worktree hoặc vào thư mục nhạy cảm (`.git`, `state/`, `logs/`, `orchestrator/`).
+  - Xử lý tương thích đường dẫn `\` trong tokenizer, ngăn chặn kỹ thuật bypass bằng ký tự escape.
+- **Schema & Giả định**:
+  - `core/schemas/reviewer-report.schema.json`: đặc tả JSON Schema kiểm chứng báo cáo đánh giá của Reviewer (`APPROVED` / `CHANGES_REQUESTED`, checklist AC, findings phân loại theo mức độ nghiêm trọng).
+  - `docs/ASSUMPTIONS.md`: tài liệu hóa 4 giả định kỹ thuật về Claude Code kèm hướng dẫn kiểm chứng độc lập.
+
 ## Giới hạn đã biết
 - guard-edit chỉ kiểm soát Edit/Write/MultiEdit/NotebookEdit. Bash vẫn ghi file được (`sed -i`, `echo >`):
   đã có kiểm soát đối chiếu `git diff` ở chốt chặn bàn giao (report-check và integrate).
 - Không có AGENT_EXEC_ID thì guard-edit lấy state mới nhất (theo mtime) có Task đó đang in_progress.
 - Task không khai báo owned_files: kế hoạch chỉ bị cảnh báo, nhưng guard-edit chặn mọi lần sửa của Task đó.
 - guard-bash là so khớp chuỗi tokenized: chưa bắt được alias git tinh vi, script tự viết hoặc `curl | bash`.
-- Đang hoàn thiện: recovery khi khởi động lại (H2), execution report (H3), review-gate và ma trận quyền vai trò (H4).
