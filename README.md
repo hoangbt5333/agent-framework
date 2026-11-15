@@ -43,6 +43,7 @@ Mỗi lần chặn được ghi vào `logs/<exec>/hooks.jsonl` (event `guard_den
     node orchestrator/cli.mjs report-check TASK-001 --exec EXEC-001
     node orchestrator/cli.mjs review-record TASK-001 --exec EXEC-001 --verdict APPROVED
     node orchestrator/cli.mjs recover      --exec EXEC-001
+    node orchestrator/cli.mjs report       --exec EXEC-001 [--format markdown|json]
     node orchestrator/cli.mjs integrate    TASK-001 --exec EXEC-001
     node orchestrator/cli.mjs status --exec EXEC-001
 
@@ -55,6 +56,16 @@ Mỗi lần chặn được ghi vào `logs/<exec>/hooks.jsonl` (event `guard_den
   - Có commit nhưng chưa chạy gate -> tự động chạy gate để kiểm chứng.
   - Lỗi môi trường (timeout, disk) -> thử lại có backoff, không trừ attempts của Coder.
 - **Circuit Breaker**: Khi xảy ra 3 thất bại liên tiếp (`consecutive_failures >= 3`), hệ thống tự động ngắt điều phối (`circuit_breaker_tripped = true`), ngăn vòng lặp tiêu tốn tài nguyên và thông báo deadlock cần can thiệp.
+
+## Quan sát & Báo cáo Tổng kết (H3)
+- **Báo cáo Thực thi (Execution Summary Report)**: Tự động tổng hợp dữ liệu từ `state/<exec_id>.json` và `logs/<exec_id>/hooks.jsonl` ra định dạng Markdown hoặc JSON.
+- **Chỉ số theo dõi**:
+  - Tiến độ, tỷ lệ hoàn thành (completion rate).
+  - Vòng đời Task, số lần thử (`attempts`), số vòng review (`review_rounds`).
+  - Phân loại nguyên nhân lỗi (`code` vs `environment` vs `review`).
+  - Lịch sử vi phạm bảo mật bị chặn (`guard_denied`) với cơ chế tự động che secret (`[REDACTED]`).
+  - Trạng thái tích hợp Jira MCP (đồng bộ hoặc bỏ qua fail-open).
+  - Minh bạch về Token Usage: ghi chú rõ `Nguồn dữ liệu không khả dụng từ CLI` do hạn chế trích xuất trực tiếp từ Claude Code CLI transcript.
 
 ## Giới hạn đã biết
 - guard-edit chỉ kiểm soát Edit/Write/MultiEdit/NotebookEdit. Bash vẫn ghi file được (`sed -i`, `echo >`):

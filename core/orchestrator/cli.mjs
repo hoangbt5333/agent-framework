@@ -10,6 +10,7 @@
 //   node cli.mjs integrate <TASK> --exec E1 [--clean-worktree] (tích hợp Task vào nhánh integration/E1)
 //   node cli.mjs review-record <TASK> --exec E1 --verdict <APPROVED|CHANGES_REQUESTED> [--findings <json>]
 //   node cli.mjs recover [--task <TASK>] --exec E1         (tự động phục hồi Task hoặc toàn bộ execution)
+//   node cli.mjs report  --exec E1 [--format markdown|json] [--output <path>] (xuất báo cáo tổng kết phiên)
 // Exit code: 0 ok, 1 kế hoạch có xung đột / báo cáo không đạt / tích hợp thất bại, 2 lỗi sử dụng/cấu hình/state.
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -23,6 +24,7 @@ import { planCheck } from './ownership.mjs';
 import { buildBrief, checkHandoff, validateBriefShape, worktreePathFor, REPORT_FILE } from './report.mjs';
 import { integrateTask } from './integrate.mjs';
 import { recoverTask, recoverExecution, recordReview } from './recover.mjs';
+import { saveExecutionReport, formatMarkdownReport, generateExecutionSummary } from './report-summary.mjs';
 import { join } from 'node:path';
 
 const [command, ...rest] = process.argv.slice(2);
@@ -34,6 +36,8 @@ const { values, positionals } = parseArgs({
     tasks: { type: 'string' }, agent: { type: 'string' }, note: { type: 'string' },
     task: { type: 'string' }, verdict: { type: 'string' }, findings: { type: 'string' },
     reviewer: { type: 'string' },
+    format: { type: 'string', default: 'markdown' },
+    output: { type: 'string' },
     force: { type: 'boolean', default: false },
     'allow-conflicts': { type: 'boolean', default: false },
     'clean-worktree': { type: 'boolean', default: false },
@@ -48,8 +52,8 @@ const readTasks = () => {
 };
 
 try {
-  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check', 'integrate', 'recover', 'review-record'].includes(command)) {
-    throw new Error('Lệnh: check | init | next | move | status | brief | report-check | integrate | recover | review-record');
+  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check', 'integrate', 'recover', 'review-record', 'report'].includes(command)) {
+    throw new Error('Lệnh: check | init | next | move | status | brief | report-check | integrate | recover | review-record | report');
   }
   if (command !== 'check' && !values.exec) throw new Error('Thiếu --exec <exec_id>');
   const config = loadConfig(root);
@@ -145,6 +149,19 @@ try {
       out(result);
       process.exit(result.ok ? 0 : 1);
     }
+  } else if (command === 'report') {
+    const reportRes = saveExecutionReport({
+      root,
+      execId: values.exec,
+      format: values.format,
+      outputPath: values.output,
+    });
+    if (values.format === 'json') {
+      out(reportRes.summary);
+    } else {
+      console.log(formatMarkdownReport(reportRes.summary));
+    }
+    process.exit(0);
   } else {
     const state = loadState(root, values.exec);
     out({ exec_id: state.exec_id, tasks: state.tasks.map((t) => ({ id: t.id, status: t.status, attempts: t.attempts, assigned_to: t.assigned_to })), ...detectDeadlock(state) });
