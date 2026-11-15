@@ -7,7 +7,8 @@
 //   node cli.mjs status --exec E1
 //   node cli.mjs brief  <TASK> --exec E1                   (sinh Task Brief JSON để giao cho Coder)
 //   node cli.mjs report-check <TASK> --exec E1             (kiểm tra độc lập báo cáo bàn giao; exit 1 nếu không đạt)
-// Exit code: 0 ok, 1 kế hoạch có xung đột / báo cáo không đạt, 2 lỗi sử dụng/cấu hình/state.
+//   node cli.mjs integrate <TASK> --exec E1 [--clean-worktree] (tích hợp Task vào nhánh integration/E1)
+// Exit code: 0 ok, 1 kế hoạch có xung đột / báo cáo không đạt / tích hợp thất bại, 2 lỗi sử dụng/cấu hình/state.
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -18,6 +19,7 @@ import {
 } from './state.mjs';
 import { planCheck } from './ownership.mjs';
 import { buildBrief, checkHandoff, validateBriefShape, worktreePathFor, REPORT_FILE } from './report.mjs';
+import { integrateTask } from './integrate.mjs';
 import { join } from 'node:path';
 
 const [command, ...rest] = process.argv.slice(2);
@@ -29,6 +31,7 @@ const { values, positionals } = parseArgs({
     tasks: { type: 'string' }, agent: { type: 'string' }, note: { type: 'string' },
     force: { type: 'boolean', default: false },
     'allow-conflicts': { type: 'boolean', default: false },
+    'clean-worktree': { type: 'boolean', default: false },
   },
 });
 const root = resolve(values.root);
@@ -40,7 +43,9 @@ const readTasks = () => {
 };
 
 try {
-  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check'].includes(command)) throw new Error('Lệnh: check | init | next | move | status | brief | report-check');
+  if (!['check', 'init', 'next', 'move', 'status', 'brief', 'report-check', 'integrate'].includes(command)) {
+    throw new Error('Lệnh: check | init | next | move | status | brief | report-check | integrate');
+  }
   if (command !== 'check' && !values.exec) throw new Error('Thiếu --exec <exec_id>');
   const config = loadConfig(root);
 
@@ -85,6 +90,17 @@ try {
     const { problems, notes } = checkHandoff({ report, task, execId: values.exec, config, mainRoot: root, worktree });
     out({ ok: problems.length === 0, problems, notes });
     process.exit(problems.length ? 1 : 0);
+  } else if (command === 'integrate') {
+    const [taskId] = positionals;
+    if (!taskId) throw new Error('Dùng: integrate <TASK> --exec <id> [--clean-worktree]');
+    const result = await integrateTask({
+      root,
+      execId: values.exec,
+      taskId,
+      cleanWorktree: values['clean-worktree'],
+    });
+    out(result);
+    process.exit(result.ok ? 0 : 1);
   } else {
     const state = loadState(root, values.exec);
     out({ exec_id: state.exec_id, tasks: state.tasks.map((t) => ({ id: t.id, status: t.status, attempts: t.attempts, assigned_to: t.assigned_to })), ...detectDeadlock(state) });

@@ -8,14 +8,14 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.mjs';
-import { REPORT_FILE } from './paths-policy.mjs';
+import { REPORT_FILE, REVIEW_FILE } from './paths-policy.mjs';
 
 // Các kiểm tra thuộc cổng của Coder. e2e/install không nằm ở đây.
 export const GATE_CHECKS = ['build', 'typecheck', 'lint', 'unit_test'];
 const ENV_ERROR_PATTERN = /ENOTFOUND|ECONNREFUSED|ECONNRESET|EADDRINUSE|ETIMEDOUT|EAI_AGAIN|rate limit/i;
 const COMMAND_NOT_FOUND_PATTERN = /is not recognized as an internal or external command/i;
 
-const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).replace(/\r/g, '').trim();
 
 /** Chạy một lệnh, lưu stdout/stderr ra file, có timeout. Không bao giờ ném lỗi. */
 export function runCommand({ cmd, cwd, timeoutMs, stdoutFile, stderrFile }) {
@@ -77,7 +77,8 @@ export async function runGate({ config, taskId, execId, worktree, root = process
   const results = [];
   const dirty = git(cwd, ['status', '--porcelain'])
     .split('\n')
-    .filter((line) => line && line.slice(3).trim() !== REPORT_FILE);
+    .map((line) => line.trim())
+    .filter((line) => line && line.slice(3).trim() !== REPORT_FILE && line.slice(3).trim() !== REVIEW_FILE);
   const hasUncommittedChanges = dirty.length > 0;
   results.push({ name: 'git_clean', required: true, passed: !hasUncommittedChanges, detail: !hasUncommittedChanges ? 'không có thay đổi chưa commit' : dirty.slice(0, 20) });
 
