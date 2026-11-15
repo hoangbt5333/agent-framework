@@ -12,9 +12,9 @@ export const STATUSES = ['pending', 'blocked', 'in_progress', 'ready_for_review'
 // để phục hồi sau khi phiên bị ngắt (mục 8.3: "đặt lại pending và tăng attempts").
 export const TRANSITIONS = {
   pending: ['in_progress', 'blocked'],
-  blocked: ['pending'],
-  in_progress: ['ready_for_review', 'failed', 'pending'],
-  ready_for_review: ['completed', 'in_progress'],
+  blocked: ['pending', 'in_progress'],
+  in_progress: ['ready_for_review', 'failed', 'pending', 'blocked'],
+  ready_for_review: ['completed', 'in_progress', 'blocked'],
   completed: [],
   failed: ['pending'],
 };
@@ -128,7 +128,7 @@ export function validateDag(tasks) {
 }
 
 /** Tạo state mới từ danh sách Task của Architect. Ném StateError nếu DAG sai. */
-export function createState({ execId, tasks, maxAttempts = 3 }) {
+export function createState({ execId, tasks, maxAttempts = 3, maxReviewRounds = 2 }) {
   const { errors } = validateDag(tasks);
   if (errors.length) throw new StateError(`DAG không hợp lệ:\n  - ${errors.join('\n  - ')}`);
   const now = new Date().toISOString();
@@ -136,6 +136,8 @@ export function createState({ execId, tasks, maxAttempts = 3 }) {
     exec_id: execId,
     created_at: now,
     updated_at: now,
+    consecutive_failures: 0,
+    circuit_breaker_tripped: false,
     tasks: tasks.map((t) => ({
       id: t.id,
       title: t.title ?? t.id,
@@ -147,6 +149,9 @@ export function createState({ execId, tasks, maxAttempts = 3 }) {
       status: 'pending',
       attempts: 0,
       max_attempts: t.max_attempts ?? maxAttempts,
+      review_rounds: 0,
+      max_review_rounds: t.max_review_rounds ?? maxReviewRounds,
+      last_failure_kind: null,
       started_at: null,
       finished_at: null,
     })),
@@ -161,7 +166,7 @@ export function getTask(state, taskId) {
 }
 
 /** Đổi trạng thái Task theo bảng TRANSITIONS. Chỉ Orchestrator nên gọi hàm này. */
-export function transition(state, taskId, to, { agent, note } = {}) {
+export function transition(state, taskId, to, { agent, note, failure_kind, increment_attempts = true } = {}) {
   const task = getTask(state, taskId);
   const from = task.status;
   if (!STATUSES.includes(to)) throw new StateError(`Trạng thái không hợp lệ: ${to}`);
@@ -170,11 +175,15 @@ export function transition(state, taskId, to, { agent, note } = {}) {
   }
   const now = new Date().toISOString();
 
+  if (failure_kind) task.last_failure_kind = failure_kind;
+
   if (to === 'in_progress') {
     const notDone = task.depends_on.filter((d) => getTask(state, d).status !== 'completed');
     if (notDone.length) throw new StateError(`${taskId}: dependency chưa completed: ${notDone.join(', ')}`);
-    if (task.attempts >= task.max_attempts) throw new StateError(`${taskId}: đã hết ${task.max_attempts} lần thử, hãy đánh dấu failed`);
-    task.attempts += 1;
+    if (increment_attempts) {
+      if (task.attempts >= task.max_attempts) throw new StateError(`${taskId}: đã hết ${task.max_attempts} lần thử, hãy đánh dấu failed`);
+      task.attempts += 1;
+    }
     task.started_at = now;
     task.finished_at = null;
     if (agent) task.assigned_to = agent;
@@ -182,8 +191,25 @@ export function transition(state, taskId, to, { agent, note } = {}) {
   if (to === 'pending') task.assigned_to = null;
   if (to === 'completed' || to === 'failed') task.finished_at = now;
 
+  if (to === 'failed') {
+    state.consecutive_failures = (state.consecutive_failures || 0) + 1;
+    if (state.consecutive_failures >= 3) {
+      state.circuit_breaker_tripped = true;
+    }
+  } else if (to === 'completed') {
+    state.consecutive_failures = 0;
+  }
+
   task.status = to;
-  state.history.push({ ts: now, task_id: taskId, from, to, agent: agent ?? null, note: note ?? null });
+  state.history.push({
+    ts: now,
+    task_id: taskId,
+    from,
+    to,
+    agent: agent ?? null,
+    note: note ?? null,
+    failure_kind: failure_kind ?? null,
+  });
   return task;
 }
 
@@ -195,6 +221,7 @@ const depsDone = (state, task) => task.depends_on.every((d) => getTask(state, d)
  * hoặc với Task khác vừa được chọn trong cùng lượt.
  */
 export function readyTasks(state, maxParallel) {
+  if (state.circuit_breaker_tripped) return [];
   const running = state.tasks.filter((t) => t.status === 'in_progress').length;
   const slots = Math.max(0, maxParallel - running);
   const holding = state.tasks.filter((t) => t.status === 'in_progress' || t.status === 'ready_for_review');
@@ -213,6 +240,13 @@ export function readyTasks(state, maxParallel) {
  * hay chờ review. Trả về { deadlock, stuck: [{id, reason}] }.
  */
 export function detectDeadlock(state) {
+  if (state.circuit_breaker_tripped) {
+    return {
+      deadlock: true,
+      circuit_breaker: true,
+      stuck: [{ id: 'CIRCUIT_BREAKER', reason: `Circuit breaker ngắt do ${state.consecutive_failures || 3} lỗi liên tiếp` }],
+    };
+  }
   const open = state.tasks.filter((t) => t.status === 'pending' || t.status === 'blocked');
   if (!open.length) return { deadlock: false, stuck: [] };
   const active = state.tasks.some((t) => t.status === 'in_progress' || t.status === 'ready_for_review');

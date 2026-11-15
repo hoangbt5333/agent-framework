@@ -41,8 +41,20 @@ Mỗi lần chặn được ghi vào `logs/<exec>/hooks.jsonl` (event `guard_den
     node orchestrator/cli.mjs move   TASK-001 in_progress --exec EXEC-001 --agent coder
     node orchestrator/validate.mjs   TASK-001 ../wt/TASK-001 --exec EXEC-001 --base integration/EXEC-001
     node orchestrator/cli.mjs report-check TASK-001 --exec EXEC-001
+    node orchestrator/cli.mjs review-record TASK-001 --exec EXEC-001 --verdict APPROVED
+    node orchestrator/cli.mjs recover      --exec EXEC-001
     node orchestrator/cli.mjs integrate    TASK-001 --exec EXEC-001
     node orchestrator/cli.mjs status --exec EXEC-001
+
+## Phục hồi & Độ tin cậy (H2)
+- **Review Rounds & Gating**: Quản lý vòng phản hồi của Reviewer độc lập với attempts của Coder. Vượt quá `limits.max_review_rounds` (mặc định 2) sẽ tự động chuyển Task sang `blocked` và đánh dấu `needs_human: true`.
+- **Tự động phục hồi (recover)**: Đối chiếu 5 nguồn sự thật (State JSON, worktree git status, git log, validation evidence, execution log) khi Orchestrator hoặc Coder bị crash/ngắt quãng.
+  - File dở dang chưa commit -> bảo lưu trong `in_progress`.
+  - Không có commit mới -> đặt lại `pending` và tăng `attempts`.
+  - Có commit mới kèm evidence hợp lệ -> tự động chuyển `ready_for_review`.
+  - Có commit nhưng chưa chạy gate -> tự động chạy gate để kiểm chứng.
+  - Lỗi môi trường (timeout, disk) -> thử lại có backoff, không trừ attempts của Coder.
+- **Circuit Breaker**: Khi xảy ra 3 thất bại liên tiếp (`consecutive_failures >= 3`), hệ thống tự động ngắt điều phối (`circuit_breaker_tripped = true`), ngăn vòng lặp tiêu tốn tài nguyên và thông báo deadlock cần can thiệp.
 
 ## Giới hạn đã biết
 - guard-edit chỉ kiểm soát Edit/Write/MultiEdit/NotebookEdit. Bash vẫn ghi file được (`sed -i`, `echo >`):
