@@ -85,6 +85,44 @@ function updateClaudeMd(targetDir, projectName, baseBranch, { dryRun = false } =
 }
 
 /**
+ * Update or inject GEMINI.md framework section for Antigravity
+ */
+function updateGeminiMd(targetDir, projectName, baseBranch, { dryRun = false } = {}) {
+  const geminiMdPath = path.resolve(targetDir, 'GEMINI.md');
+  const tmplPath = path.resolve(SCRIPT_DIR, 'templates', 'GEMINI.md.tmpl');
+  if (!fs.existsSync(tmplPath)) return null;
+
+  const tmplContent = fs.readFileSync(tmplPath, 'utf8')
+    .replaceAll('{{FRAMEWORK_VERSION}}', FRAMEWORK_VERSION)
+    .replaceAll('{{PROJECT_NAME}}', projectName)
+    .replaceAll('{{BASE_BRANCH}}', baseBranch);
+
+  const startMarker = '<!-- framework:start -->';
+  const endMarker = '<!-- framework:end -->';
+
+  const tmplFrameworkSection = tmplContent.substring(
+    tmplContent.indexOf(startMarker),
+    tmplContent.indexOf(endMarker) + endMarker.length
+  );
+
+  if (!fs.existsSync(geminiMdPath)) {
+    if (!dryRun) fs.writeFileSync(geminiMdPath, tmplContent, 'utf8');
+    return 'created';
+  }
+
+  const currentContent = fs.readFileSync(geminiMdPath, 'utf8');
+  if (currentContent.includes(startMarker) && currentContent.includes(endMarker)) {
+    const before = currentContent.substring(0, currentContent.indexOf(startMarker));
+    const after = currentContent.substring(currentContent.indexOf(endMarker) + endMarker.length);
+    if (!dryRun) fs.writeFileSync(geminiMdPath, `${before}${tmplFrameworkSection}${after}`, 'utf8');
+    return 'updated_framework_section';
+  } else {
+    if (!dryRun) fs.writeFileSync(geminiMdPath, `${tmplFrameworkSection}\n\n${currentContent}`, 'utf8');
+    return 'prepended_framework_section';
+  }
+}
+
+/**
  * Merge settings.fragment.json into target .claude/settings.json
  */
 function mergeSettings(targetDir, { dryRun = false } = {}) {
@@ -206,17 +244,33 @@ export function installFramework({
     actions.push({ action: 'preserve_config' });
   }
 
-  // 4. Update CLAUDE.md
+  // 4. Update CLAUDE.md & GEMINI.md
   const claudeResult = updateClaudeMd(resolvedTarget, projectName, baseBranch, { dryRun });
   console.log(`  + CLAUDE.md (${claudeResult})`);
   actions.push({ action: 'claude_md', status: claudeResult });
+
+  const geminiResult = updateGeminiMd(resolvedTarget, projectName, baseBranch, { dryRun });
+  if (geminiResult) {
+    console.log(`  + GEMINI.md (${geminiResult})`);
+    actions.push({ action: 'gemini_md', status: geminiResult });
+  }
 
   // 5. Merge settings.fragment.json
   const mergedSettings = mergeSettings(resolvedTarget, { dryRun });
   console.log(`  + Merged .claude/settings.json`);
   actions.push({ action: 'merge_settings' });
 
-  // 6. Update .gitignore
+  // 6. Copy core/.agents -> <target>/.agents (Antigravity hooks & skills)
+  const srcAgents = path.resolve(SCRIPT_DIR, 'core', '.agents');
+  if (fs.existsSync(srcAgents)) {
+    const agentFiles = [];
+    const destAgents = path.resolve(resolvedTarget, '.agents');
+    copyDirSync(srcAgents, destAgents, agentFiles, { dryRun });
+    actions.push({ action: 'copy_agents', count: agentFiles.length });
+    console.log(`  + Configured .agents/ (Antigravity hooks & skills)`);
+  }
+
+  // 7. Update .gitignore
   const gitignoreResult = updateGitignore(resolvedTarget, { dryRun });
   actions.push({ action: 'gitignore', added: gitignoreResult.added });
 

@@ -1,24 +1,26 @@
 # agent-framework (v0.4.0)
 
-Cấu hình dự án + state Task + Coder Completion Gate + file ownership + Hook bảo vệ (3 hook chặn, 1 hook log) + Tích hợp tự động (integrate).
-Không cần thư viện ngoài (Node >= 20). `npm test` chạy 69 test.
+Cấu hình dự án + state Task + Coder Completion Gate + file ownership + Hook bảo vệ kép (hỗ trợ song song Claude Code & Antigravity) + Tích hợp tự động (integrate).
+Không cần thư viện ngoài (Node >= 20). `npm test` chạy toàn bộ bộ test.
 
 ## Cấu trúc
 - `core/orchestrator/`        config, state, ownership, validate, report, integrate, cli, schema-lite
-- `core/orchestrator/hooks/`  guard-bash, guard-edit (chặn, fail-closed) · guard-handoff (cổng chất lượng, fail-open) · log-event (log, fail-open)
-- `core/.claude/settings.fragment.json`  hook + permissions để GỘP vào settings.json
-- `core/schemas/`, `profiles/`, `tests/`
+- `core/orchestrator/hooks/`  guard-bash, guard-edit (chặn, fail-closed) · guard-handoff (cổng chất lượng, fail-open) · log-event (log, fail-open) · hook-adapter (tương thích đa nền tảng)
+- `core/.claude/`             settings.fragment.json (dành cho Claude Code CLI)
+- `core/.agents/`             hooks.json, hook-runner.mjs, skills/ (dành cho Google Antigravity)
+- `core/schemas/`, `profiles/`, `tests/`, `templates/`
 
 ## Cài vào dự án
 1. Dùng lệnh cài đặt tự động: `node install.mjs <target_dir> [--profile angular|node-ts] [--dry-run]`
    - `--dry-run`: mô phỏng cài đặt, kiểm tra các thao tác mà không ghi đè bất kỳ file nào.
-   - Tự động sao chép `orchestrator/`, `schemas/`, khởi tạo `project.config.json`, cập nhật `CLAUDE.md`, gộp an toàn `.claude/settings.json`, và sinh `agent-framework.lock.json`.
+   - Tự động sao chép `orchestrator/`, `schemas/`, `.agents/`, khởi tạo `project.config.json`, cập nhật `CLAUDE.md` & `GEMINI.md`, gộp an toàn `.claude/settings.json`, và sinh `agent-framework.lock.json`.
 2. Hoặc cài thủ công:
-   - Copy `core/orchestrator/` -> `orchestrator/`, `core/schemas/` -> `schemas/` ở gốc dự án.
+   - Copy `core/orchestrator/` -> `orchestrator/`, `core/schemas/` -> `schemas/`, `core/.agents/` -> `.agents/` ở gốc dự án.
    - Copy `profiles/angular.json` -> `project.config.json`, sửa lệnh cho khớp dự án.
-   - GỘP `core/.claude/settings.fragment.json` vào `.claude/settings.json` (đừng ghi đè).
+   - GỘP `core/.claude/settings.fragment.json` vào `.claude/settings.json` (nếu dùng Claude Code).
+   - Copy `GEMINI.md` vào thư mục gốc (nếu dùng Antigravity).
    - `.gitignore`: thêm `state/` và `logs/`.
-   - Commit `orchestrator/`, `.claude/`, `project.config.json` TRƯỚC khi tạo worktree.
+   - Commit `orchestrator/`, `.claude/`, `.agents/`, `project.config.json` TRƯỚC khi tạo worktree.
 
 ## Quy ước bắt buộc
 - Worktree của Task nằm ở `<git.worktree_dir>/<TASK-ID>/` (mặc định `../wt/TASK-001`), tên thư mục = id Task.
