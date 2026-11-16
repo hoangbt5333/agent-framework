@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, existsSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createState, transition, saveState, loadState } from '../core/orchestrator/state.mjs';
@@ -299,4 +299,38 @@ test('cli.mjs integrate: gọi qua CLI hoạt động đúng', async () => {
   const out = JSON.parse(r.stdout);
   assert.equal(out.ok, true);
   assert.equal(out.status, 'completed');
+});
+
+test('integrateTask: tự động thăng cấp in_progress lên ready_for_review khi có handoff report đạt', async () => {
+  const { main, wt } = setupRepo();
+  await prepareTaskHandoff({ main, wtPath: wt('TASK-001'), taskId: 'TASK-001' });
+
+  // Đưa trạng thái về lại in_progress (như khi Coder xong việc mà chưa chạy move)
+  const s = loadState(main, 'EXEC-001');
+  s.tasks[0].status = 'in_progress';
+  saveState(main, s);
+
+  const res = await integrateTask({ root: main, execId: 'EXEC-001', taskId: 'TASK-001' });
+  assert.equal(res.ok, true);
+  assert.equal(res.status, 'completed');
+
+  const finalState = loadState(main, 'EXEC-001');
+  assert.equal(finalState.tasks[0].status, 'completed');
+});
+
+test('integrateTask: autostash tự động cất và khôi phục thay đổi chưa commit ở thư mục gốc', async () => {
+  const { main, wt } = setupRepo();
+  await prepareTaskHandoff({ main, wtPath: wt('TASK-001'), taskId: 'TASK-001' });
+
+  // Tạo thay đổi chưa commit ở thư mục gốc
+  const localConfig = join(main, 'local-note.txt');
+  writeFileSync(localConfig, 'local untracked note');
+
+  const res = await integrateTask({ root: main, execId: 'EXEC-001', taskId: 'TASK-001', autostash: true });
+  assert.equal(res.ok, true);
+  assert.equal(res.status, 'completed');
+
+  // Kiểm tra file local vẫn còn nguyên vẹn sau khi stash pop
+  assert.equal(existsSync(localConfig), true);
+  assert.equal(readFileSync(localConfig, 'utf8'), 'local untracked note');
 });
