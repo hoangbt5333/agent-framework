@@ -79,7 +79,21 @@ export async function runGate({ config, taskId, execId, worktree, root = process
   const dirty = git(cwd, ['status', '--porcelain'])
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line && line.slice(3).trim() !== REPORT_FILE && line.slice(3).trim() !== REVIEW_FILE);
+    .filter((line) => {
+      if (!line) return false;
+      const file = line.slice(3).trim();
+      return (
+        file !== REPORT_FILE &&
+        file !== REVIEW_FILE &&
+        file !== 'tasks.json' &&
+        !file.startsWith('logs/') &&
+        !file.startsWith('logs\\') &&
+        !file.startsWith('state/') &&
+        !file.startsWith('state\\') &&
+        file !== 'logs' &&
+        file !== 'state'
+      );
+    });
   const hasUncommittedChanges = dirty.length > 0;
   results.push({ name: 'git_clean', required: true, passed: !hasUncommittedChanges, detail: !hasUncommittedChanges ? 'không có thay đổi chưa commit' : dirty.slice(0, 20) });
 

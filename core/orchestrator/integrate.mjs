@@ -154,7 +154,21 @@ export async function integrateTask({
   const rootDirty = git(mainRoot, ['status', '--porcelain'])
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l && !l.endsWith(REPORT_FILE));
+    .filter((l) => {
+      if (!l) return false;
+      const file = l.slice(3).trim();
+      return (
+        file !== REPORT_FILE &&
+        file !== REVIEW_FILE &&
+        file !== 'tasks.json' &&
+        !file.startsWith('logs/') &&
+        !file.startsWith('logs\\') &&
+        !file.startsWith('state/') &&
+        !file.startsWith('state\\') &&
+        file !== 'logs' &&
+        file !== 'state'
+      );
+    });
   if (rootDirty.length > 0) {
     throw new IntegrateError(
       `Thư mục gốc ${mainRoot} còn thay đổi chưa commit, không thể chuyển nhánh để tích hợp:\n  ${rootDirty.join('\n  ')}`,
