@@ -277,8 +277,12 @@ export async function integrateTask({
   // 10. Dọn dẹp worktree nếu được yêu cầu
   if (cleanWorktree && existsSync(worktree)) {
     try {
-      git(mainRoot, ['worktree', 'remove', worktree]);
-    } catch {
+      const wtModules = join(worktree, 'node_modules');
+      if (existsSync(wtModules)) {
+        try { rmSync(wtModules, { recursive: false }); } catch (_) {}
+      }
+      git(mainRoot, ['worktree', 'remove', '--force', worktree]);
+    } catch (err){
       /* bỏ qua nếu worktree đang bận */
     }
   }
