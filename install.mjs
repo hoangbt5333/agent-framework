@@ -153,6 +153,103 @@ function mergeSettings(targetDir, { dryRun = false } = {}) {
 }
 
 /**
+ * Merge framework-guard into target .agents/hooks.json and copy hook-runner.mjs
+ */
+function mergeHooks(targetDir, { dryRun = false } = {}) {
+  const sourceHooksPath = path.resolve(SCRIPT_DIR, 'core', '.agents', 'hooks.json');
+  const sourceRunnerPath = path.resolve(SCRIPT_DIR, 'core', '.agents', 'hook-runner.mjs');
+  if (!fs.existsSync(sourceHooksPath)) return null;
+
+  const targetAgentsDir = path.resolve(targetDir, '.agents');
+  const targetHooksPath = path.resolve(targetAgentsDir, 'hooks.json');
+  const targetRunnerPath = path.resolve(targetAgentsDir, 'hook-runner.mjs');
+
+  const frameworkHooks = JSON.parse(fs.readFileSync(sourceHooksPath, 'utf8'));
+
+  let existingHooks = {};
+  if (fs.existsSync(targetHooksPath)) {
+    try {
+      existingHooks = JSON.parse(fs.readFileSync(targetHooksPath, 'utf8'));
+    } catch (_) {
+      existingHooks = {};
+    }
+  }
+
+  const merged = mergeDeep(existingHooks, frameworkHooks);
+  if (!dryRun) {
+    if (!fs.existsSync(targetAgentsDir)) {
+      fs.mkdirSync(targetAgentsDir, { recursive: true });
+    }
+    fs.writeFileSync(targetHooksPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    if (fs.existsSync(sourceRunnerPath)) {
+      fs.copyFileSync(sourceRunnerPath, targetRunnerPath);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Copy framework orchestrator skill to target .agents/skills/orchestrator
+ */
+function installOrchestratorSkill(targetDir, { dryRun = false } = {}) {
+  const srcSkillDir = path.resolve(SCRIPT_DIR, 'core', '.agents', 'skills', 'orchestrator');
+  const destSkillDir = path.resolve(targetDir, '.agents', 'skills', 'orchestrator');
+
+  if (!fs.existsSync(srcSkillDir)) return null;
+
+  const copiedFiles = [];
+  copyDirSync(srcSkillDir, destSkillDir, copiedFiles, { dryRun });
+  return copiedFiles;
+}
+
+/**
+ * Install agent templates into target .agents/agents
+ * - Never overwrites an existing agent in .agents/agents
+ * - If agent exists in .claude/agents but not .agents/agents, syncs the custom prompt
+ * - If missing in both, installs starter template
+ */
+function installAgents(targetDir, { dryRun = false } = {}) {
+  const templatesAgentsDir = path.resolve(SCRIPT_DIR, 'templates', 'agents');
+  if (!fs.existsSync(templatesAgentsDir)) {
+    return { installed: [], preserved: [] };
+  }
+
+  const targetAgentsDir = path.resolve(targetDir, '.agents', 'agents');
+  const targetClaudeAgentsDir = path.resolve(targetDir, '.claude', 'agents');
+
+  const files = fs.readdirSync(templatesAgentsDir).filter((f) => f.endsWith('.md'));
+  const installed = [];
+  const preserved = [];
+
+  for (const file of files) {
+    const destPath = path.resolve(targetAgentsDir, file);
+    const claudePath = path.resolve(targetClaudeAgentsDir, file);
+
+    if (fs.existsSync(destPath)) {
+      preserved.push(file);
+    } else if (fs.existsSync(claudePath)) {
+      if (!dryRun) {
+        if (!fs.existsSync(targetAgentsDir)) {
+          fs.mkdirSync(targetAgentsDir, { recursive: true });
+        }
+        fs.copyFileSync(claudePath, destPath);
+      }
+      preserved.push(file);
+    } else {
+      if (!dryRun) {
+        if (!fs.existsSync(targetAgentsDir)) {
+          fs.mkdirSync(targetAgentsDir, { recursive: true });
+        }
+        fs.copyFileSync(path.resolve(templatesAgentsDir, file), destPath);
+      }
+      installed.push(file);
+    }
+  }
+
+  return { installed, preserved };
+}
+
+/**
  * Update target .gitignore with framework temporary folders
  */
 function updateGitignore(targetDir, { dryRun = false } = {}) {
@@ -260,26 +357,38 @@ export function installFramework({
   console.log(`  + Merged .claude/settings.json`);
   actions.push({ action: 'merge_settings' });
 
-  // 6. Copy core/.agents -> <target>/.agents (Antigravity hooks & skills)
-  const srcAgents = path.resolve(SCRIPT_DIR, 'core', '.agents');
-  if (fs.existsSync(srcAgents)) {
-    const agentFiles = [];
-    const destAgents = path.resolve(resolvedTarget, '.agents');
-    copyDirSync(srcAgents, destAgents, agentFiles, { dryRun });
-    actions.push({ action: 'copy_agents', count: agentFiles.length });
-    console.log(`  + Configured .agents/ (Antigravity hooks & skills)`);
+  // 6. Antigravity hooks, orchestrator skill & agent templates
+  const mergedHooks = mergeHooks(resolvedTarget, { dryRun });
+  if (mergedHooks) {
+    console.log(`  + Merged .agents/hooks.json (Antigravity hooks)`);
+    actions.push({ action: 'merge_hooks' });
   }
+
+  const skillFiles = installOrchestratorSkill(resolvedTarget, { dryRun });
+  if (skillFiles) {
+    console.log(`  + Installed orchestrator skill (.agents/skills/orchestrator)`);
+    actions.push({ action: 'install_orchestrator_skill', count: skillFiles.length });
+  }
+
+  const agentResult = installAgents(resolvedTarget, { dryRun });
+  if (agentResult.installed.length > 0) {
+    console.log(`  + Installed template agents: ${agentResult.installed.join(', ')}`);
+  }
+  if (agentResult.preserved.length > 0) {
+    console.log(`  = Preserved existing agents: ${agentResult.preserved.join(', ')}`);
+  }
+  actions.push({ action: 'install_agents', installed: agentResult.installed, preserved: agentResult.preserved });
 
   // 7. Update .gitignore
   const gitignoreResult = updateGitignore(resolvedTarget, { dryRun });
   actions.push({ action: 'gitignore', added: gitignoreResult.added });
 
-  // 7. Write lockfile
+  // 8. Write lockfile
   const lockData = {
     framework_version: FRAMEWORK_VERSION,
     installed_at: new Date().toISOString(),
     profile: profileName,
-    managed_directories: ['orchestrator', 'schemas'],
+    managed_directories: ['orchestrator', 'schemas', '.agents/skills/orchestrator'],
   };
   if (!dryRun) {
     fs.writeFileSync(

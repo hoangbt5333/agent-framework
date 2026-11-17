@@ -68,6 +68,7 @@ test('installFramework: cài đặt thực tế sao chép orchestrator, schemas,
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
   assert.equal(lock.framework_version, '0.4.0');
   assert.equal(lock.profile, 'angular');
+  assert.equal(lock.managed_directories.includes('.agents/skills/orchestrator'), true);
 });
 
 test('installFramework: gộp an toàn settings.json bảo toàn cấu hình người dùng có sẵn', () => {
@@ -101,6 +102,106 @@ test('installFramework: gộp an toàn settings.json bảo toàn cấu hình ng�
   // Gộp thêm hooks từ framework
   assert.equal(Array.isArray(mergedSettings.hooks.PreToolUse), true);
   assert.equal(Array.isArray(mergedSettings.hooks.PostToolUse), true);
+});
+
+test('installFramework: gộp an toàn .agents/hooks.json bảo toàn custom hooks của dự án', () => {
+  const target = mkdtempSync(join(tmpdir(), 'af-inst-hooks-'));
+  const agentsDir = join(target, '.agents');
+  mkdirSync(agentsDir, { recursive: true });
+
+  // Giả lập dự án đã có hooks riêng của người dùng
+  const initialHooks = {
+    'custom-linter': {
+      PostToolUse: [
+        {
+          matcher: 'write_file',
+          hooks: [{ type: 'command', command: 'npm run lint:custom' }],
+        },
+      ],
+    },
+  };
+  writeFileSync(join(agentsDir, 'hooks.json'), JSON.stringify(initialHooks, null, 2), 'utf8');
+
+  installFramework({
+    targetDir: target,
+    profileName: 'angular',
+    dryRun: false,
+  });
+
+  const mergedHooks = JSON.parse(readFileSync(join(agentsDir, 'hooks.json'), 'utf8'));
+
+  // 1. Phải bảo toàn hook riêng 'custom-linter'
+  assert.ok(mergedHooks['custom-linter'], 'custom-linter phải được giữ nguyên');
+  assert.equal(mergedHooks['custom-linter'].PostToolUse[0].hooks[0].command, 'npm run lint:custom');
+
+  // 2. Phải tích hợp thêm hook 'framework-guard' từ framework
+  assert.ok(mergedHooks['framework-guard'], 'framework-guard phải được thêm vào');
+  assert.equal(Array.isArray(mergedHooks['framework-guard'].PreToolUse), true);
+  assert.equal(Array.isArray(mergedHooks['framework-guard'].Stop), true);
+
+  // 3. Phải có hook-runner.mjs
+  assert.equal(existsSync(join(agentsDir, 'hook-runner.mjs')), true);
+});
+
+test('installFramework: bảo toàn agent tùy biến trong .agents/agents/ và .claude/agents/, không bị ghi đè', () => {
+  const target = mkdtempSync(join(tmpdir(), 'af-inst-agents-'));
+  const agentsAgentsDir = join(target, '.agents', 'agents');
+  const claudeAgentsDir = join(target, '.claude', 'agents');
+  mkdirSync(agentsAgentsDir, { recursive: true });
+  mkdirSync(claudeAgentsDir, { recursive: true });
+
+  // 1. Tạo agent tùy biến trong .agents/agents/
+  const customCoderContent = '# CUSTOM CODER PROMPT FOR ANGULAR PROJECT';
+  writeFileSync(join(agentsAgentsDir, 'coder.md'), customCoderContent, 'utf8');
+
+  // 2. Tạo agent tùy biến trong .claude/agents/
+  const customArchitectContent = '# CUSTOM ARCHITECT PROMPT WITH FACADE PATTERN';
+  writeFileSync(join(claudeAgentsDir, 'architect.md'), customArchitectContent, 'utf8');
+
+  const res = installFramework({
+    targetDir: target,
+    profileName: 'angular',
+    dryRun: false,
+  });
+
+  // Kiểm tra danh sách preserved
+  const agentAction = res.actions.find((a) => a.action === 'install_agents');
+  assert.ok(agentAction);
+  assert.equal(agentAction.preserved.includes('coder.md'), true);
+  assert.equal(agentAction.preserved.includes('architect.md'), true);
+
+  // coder.md trong .agents/agents/ không bị ghi đè nội dung tùy biến
+  const actualCoder = readFileSync(join(agentsAgentsDir, 'coder.md'), 'utf8');
+  assert.equal(actualCoder, customCoderContent);
+
+  // architect.md được đồng bộ từ .claude/agents/ sang .agents/agents/ với nội dung tùy biến
+  const actualArchitect = readFileSync(join(agentsAgentsDir, 'architect.md'), 'utf8');
+  assert.equal(actualArchitect, customArchitectContent);
+
+  // Các agent chưa có (reviewer.md, release-agent.md, documentation-agent.md) được cài đặt mẫu
+  assert.equal(agentAction.installed.includes('reviewer.md'), true);
+  assert.equal(existsSync(join(agentsAgentsDir, 'reviewer.md')), true);
+});
+
+test('installFramework: chỉ cài đặt skill orchestrator và giữ nguyên các custom skills khác trong .agents/skills/', () => {
+  const target = mkdtempSync(join(tmpdir(), 'af-inst-skills-'));
+  const customSkillDir = join(target, '.agents', 'skills', 'custom-debugging');
+  mkdirSync(customSkillDir, { recursive: true });
+  writeFileSync(join(customSkillDir, 'SKILL.md'), '# Custom Debugging Skill\n', 'utf8');
+
+  installFramework({
+    targetDir: target,
+    profileName: 'angular',
+    dryRun: false,
+  });
+
+  // 1. Skill orchestrator được cài đặt
+  assert.equal(existsSync(join(target, '.agents', 'skills', 'orchestrator', 'SKILL.md')), true);
+
+  // 2. Skill riêng của dự án hoàn toàn nguyên vẹn
+  assert.equal(existsSync(join(customSkillDir, 'SKILL.md')), true);
+  const customContent = readFileSync(join(customSkillDir, 'SKILL.md'), 'utf8');
+  assert.equal(customContent, '# Custom Debugging Skill\n');
 });
 
 test('CLI: node install.mjs hỗ trợ cờ --dry-run qua dòng lệnh', () => {
